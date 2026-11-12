@@ -1,0 +1,15 @@
+notion:
+  columns: {title: 공지사항, select: 종류, date: 게시된 날짜, apply: 신청기간, run: 운영기간, link: 링크}
+retention:
+  add_months: 1            # 작성일이 최근 1개월 안인 공지만 넣음
+  program_add_months: 2    # 신청 시작일이 최근 2개월 안인 U-STEP 프로그램만 넣음
+  months: 3                # 날짜가 3개월 지난 행은 삭제
+  max_delete_per_run: 50
+# 공지사항·게시된 날짜가 같은 공지가 두 게시판에 있으면 keep 쪽만 남긴다.
+cross_source_dedup:
+  - {keep: ICT융합학부, drop: IT융합전공}
+sources:
+  - {type: ustep, name: U-STEP}
+  - {type: ulsan_board, name: ICT융합학부, url: "https://ict.ulsan.ac.kr/ict/5786"}
+  - {type: ulsan_board, name: IT융합전공, url: "https://cicweb.ulsan.ac.kr/cicweb/1024"}
+  - {type: sw_didisam, name: SW중심대학사업단, slug: swulsan}
