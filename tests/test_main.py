@@ -25,7 +25,7 @@ class FakeClient:
 
     def __init__(self, rows=(), schema=None, fail_query=False):
         self.rows, self.fail_query = list(rows), fail_query
-        self.schema = schema or {"공지사항": "title", "주관부서": "select", "게시된 날짜": "date",
+        self.schema = schema or {"공지사항(원본)": "title", "주관부서": "select", "게시된 날짜": "date",
                                  "신청기간": "date", "운영기간": "date", "링크": "url"}
         self.writes = []
         FakeClient.instances.append(self)
@@ -92,7 +92,7 @@ class TestErrorHandling:
         assert FakeClient.instances[0].writes == []
 
     def test_schema_mismatch_stops(self, monkeypatch, caplog):
-        with_notion(monkeypatch, schema={"공지사항": "title"})
+        with_notion(monkeypatch, schema={"공지사항(원본)": "title"})
         monkeypatch.setattr(m, "collect", fake_collect())
         assert m.main([]) == 1
         assert "링크" in caplog.text and FakeClient.instances[0].writes == []
@@ -122,7 +122,7 @@ class TestOptions:
 
     def test_only_limits_deletes_to_that_site(self, monkeypatch):
         old = {"id": "old", "properties": {
-            "공지사항": {"title": [{"plain_text": "옛 공지"}]}, "주관부서": {"select": {"name": "ICT융합학부"}},
+            "공지사항(원본)": {"title": [{"plain_text": "옛 공지"}]}, "주관부서": {"select": {"name": "ICT융합학부"}},
             "게시된 날짜": {"date": {"start": "2020-01-01"}}, "링크": {"url": "https://ict.ulsan.ac.kr/old"}}}
         with_notion(monkeypatch, rows=[old])
         monkeypatch.setattr(m, "collect", lambda src, s: [])
@@ -134,7 +134,7 @@ class TestOptions:
 
     def test_no_delete(self, monkeypatch):
         old = {"id": "old", "properties": {
-            "공지사항": {"title": [{"plain_text": "옛 공지"}]}, "주관부서": {"select": {"name": "ICT융합학부"}},
+            "공지사항(원본)": {"title": [{"plain_text": "옛 공지"}]}, "주관부서": {"select": {"name": "ICT융합학부"}},
             "게시된 날짜": {"date": {"start": "2020-01-01"}}, "링크": {"url": "https://ict.ulsan.ac.kr/old"}}}
         with_notion(monkeypatch, rows=[old])
         monkeypatch.setattr(m, "collect", lambda src, s: [])
@@ -179,7 +179,7 @@ class TestSeenState:
         with_notion(monkeypatch)                     # 노션은 비어 있음 = 사용자가 지움
         monkeypatch.setattr(m, "collect", fake_collect())
         assert m.main([]) == 0
-        created = [w[1]["공지사항"]["title"][0]["text"]["content"] for w in FakeClient.instances[0].writes]
+        created = [w[1]["공지사항(원본)"]["title"][0]["text"]["content"] for w in FakeClient.instances[0].writes]
         assert "프로그램" not in created and len(created) == 3
         assert "전에 본 글 1건" in caplog.text
 
