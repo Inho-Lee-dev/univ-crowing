@@ -37,7 +37,7 @@ Python 3.12가 필요합니다.
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install --require-hashes -r requirements.txt
 cp .env.example .env      # 그다음 .env에 토큰과 DB ID를 직접 입력
 ```
 

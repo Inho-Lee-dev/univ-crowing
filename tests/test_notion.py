@@ -682,3 +682,21 @@ class TestUserDeletedDuringRun:
         with pytest.raises(NotionError) as e:
             c._request("GET", "/x")
         assert (e.value.status, e.value.code) == (404, "object_not_found")
+
+
+class TestScrubIds:
+    @pytest.mark.parametrize("db_id", ["0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+                                       "0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0"])
+    def test_ids_removed_from_error(self, db_id, caplog):
+        body = {"code": "object_not_found", "message": f"Could not find database with ID: {db_id}. Make sure ..."}
+        c, _, _ = client([FakeResponse(404, body)])
+        with pytest.raises(NotionError) as e:
+            c.get_schema()
+        assert db_id.lower() not in str(e.value).lower() and "***" in str(e.value)
+        assert e.value.status == 404 and e.value.code == "object_not_found"
+
+    def test_deleted_row_still_detected_after_scrub(self):
+        c, _, _ = client([FakeResponse(400, {"code": "validation_error",
+                          "message": "Can't edit block that is archived. 1a2b3c4d-1a2b-1a2b-1a2b-1a2b3c4d5e6f"})])
+        rows = [row("a", "공지", "ICT융합학부", "2026-11-11", link="https://ict.ulsan.ac.kr/x")]
+        execute(c, plan_of([notice(title="공지(수정)", url="https://ict.ulsan.ac.kr/x")], rows), COLS, KINDS, 50)

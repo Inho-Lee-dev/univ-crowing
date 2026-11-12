@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -30,6 +31,15 @@ CONN_RETRY_DELAY = 2  # 연결 오류 시 한 번 더 시도하기 전 대기 (�
 UPDATABLE = {"program": ("title", "apply", "run"), "notice": ("title",)}
 COLUMN_TYPES = {"title": "title", "select": "select", "date": "date",
                 "apply": "date", "run": "date", "link": "url"}
+
+
+# 노션 오류 메시지에는 DB·페이지 ID가 들어간다 (예: "Could not find database with ID: xxxxxxxx-xxxx-...").
+# GitHub는 Secrets와 똑같은 문자열만 가리므로 하이픈 형태 ID는 공개 로그에 그대로 남는다. 직접 지운다.
+_ID = re.compile(r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}")
+
+
+def _scrub(text: str) -> str:
+    return _ID.sub("***", text)
 
 
 class NotionError(RuntimeError):
@@ -107,7 +117,7 @@ class NotionClient:
                 try:
                     j = r.json()
                     code = str(j.get("code", ""))
-                    msg = f"{code}: {str(j.get('message', ''))[:200]}"
+                    msg = _scrub(f"{code}: {str(j.get('message', ''))[:200]}")
                 except ValueError:
                     msg = "응답 해석 불가"
                 raise NotionError(f"노션 {r.status_code} {msg}", r.status_code, code)

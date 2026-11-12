@@ -1,0 +1,11 @@
+# 고정한 Action·패키지의 업데이트를 PR로 제안한다. 자동으로 합치지 않으니 확인 후 합친다.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly

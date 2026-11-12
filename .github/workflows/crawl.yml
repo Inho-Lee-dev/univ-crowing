@@ -32,8 +32,9 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # 하위 의존성까지 버전·해시를 고정한다. 해시가 다르면 설치하지 않는다 (공급망 공격 방지).
       - name: 의존성 설치
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.txt
 
       # 테스트가 하나라도 실패하면 노션에 쓰지 않는다. 네트워크·노션 없이 돈다.
       - name: 테스트
