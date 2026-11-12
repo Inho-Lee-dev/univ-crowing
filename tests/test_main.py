@@ -25,7 +25,7 @@ class FakeClient:
 
     def __init__(self, rows=(), schema=None, fail_query=False):
         self.rows, self.fail_query = list(rows), fail_query
-        self.schema = schema or {"공지사항": "title", "종류": "select", "게시된 날짜": "date",
+        self.schema = schema or {"공지사항": "title", "주관부서": "select", "게시된 날짜": "date",
                                  "신청기간": "date", "운영기간": "date", "링크": "url"}
         self.writes = []
         FakeClient.instances.append(self)
@@ -50,6 +50,9 @@ class FakeClient:
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch, tmp_path):
+    # 테스트는 실제 state/seen.json을 건드리지 않는다. 기본은 '빈 기록이 있음'.
+    monkeypatch.setattr(m.state, "STATE_PATH", tmp_path / "seen.json")
+    m.state.save({})
     monkeypatch.setattr(m.time, "sleep", lambda s: None)
     monkeypatch.setattr(m, "load_env", lambda: None)
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
@@ -119,7 +122,7 @@ class TestOptions:
 
     def test_only_limits_deletes_to_that_site(self, monkeypatch):
         old = {"id": "old", "properties": {
-            "공지사항": {"title": [{"plain_text": "옛 공지"}]}, "종류": {"select": {"name": "ICT융합학부"}},
+            "공지사항": {"title": [{"plain_text": "옛 공지"}]}, "주관부서": {"select": {"name": "ICT융합학부"}},
             "게시된 날짜": {"date": {"start": "2020-01-01"}}, "링크": {"url": "https://ict.ulsan.ac.kr/old"}}}
         with_notion(monkeypatch, rows=[old])
         monkeypatch.setattr(m, "collect", lambda src, s: [])
@@ -131,7 +134,7 @@ class TestOptions:
 
     def test_no_delete(self, monkeypatch):
         old = {"id": "old", "properties": {
-            "공지사항": {"title": [{"plain_text": "옛 공지"}]}, "종류": {"select": {"name": "ICT융합학부"}},
+            "공지사항": {"title": [{"plain_text": "옛 공지"}]}, "주관부서": {"select": {"name": "ICT융합학부"}},
             "게시된 날짜": {"date": {"start": "2020-01-01"}}, "링크": {"url": "https://ict.ulsan.ac.kr/old"}}}
         with_notion(monkeypatch, rows=[old])
         monkeypatch.setattr(m, "collect", lambda src, s: [])
@@ -160,3 +163,48 @@ class TestLoadEnv:
         caplog.set_level("DEBUG")
         REAL_LOAD_ENV(f)
         assert "very-secret-value" not in caplog.text
+
+
+class TestSeenState:
+    def test_saved_after_real_run(self, monkeypatch):
+        with_notion(monkeypatch)
+        monkeypatch.setattr(m, "collect", fake_collect())
+        assert m.main([]) == 0
+        assert set(m.state.load()) == {"https://ustep.ulsan.ac.kr/p?1"} | {
+            f"https://ict.ulsan.ac.kr/{n}" for n in ("ICT융합학부", "IT융합전공", "SW중심대학사업단")}
+
+    def test_deleted_by_user_not_recreated(self, monkeypatch, caplog):
+        caplog.set_level("INFO")
+        m.state.save({"https://ustep.ulsan.ac.kr/p?1": "2026-11-11"})
+        with_notion(monkeypatch)                     # 노션은 비어 있음 = 사용자가 지움
+        monkeypatch.setattr(m, "collect", fake_collect())
+        assert m.main([]) == 0
+        created = [w[1]["공지사항"]["title"][0]["text"]["content"] for w in FakeClient.instances[0].writes]
+        assert "프로그램" not in created and len(created) == 3
+        assert "전에 본 글 1건" in caplog.text
+
+    def test_dry_run_does_not_save(self, monkeypatch):
+        monkeypatch.setattr(m, "collect", fake_collect())
+        assert m.main(["--dry-run"]) == 0
+        assert m.state.load() == {}
+
+    def test_not_saved_when_notion_fails(self, monkeypatch):
+        with_notion(monkeypatch, fail_query=True)
+        monkeypatch.setattr(m, "collect", fake_collect())
+        assert m.main([]) == 1
+        assert m.state.load() == {}
+
+    def test_missing_file_records_only(self, monkeypatch):
+        m.state.STATE_PATH.unlink()
+        with_notion(monkeypatch)
+        monkeypatch.setattr(m, "collect", fake_collect())
+        assert m.main([]) == 0
+        assert FakeClient.instances[0].writes == []
+        assert len(m.state.load()) == 4
+
+    def test_broken_file_stops_without_writing(self, monkeypatch, caplog):
+        m.state.STATE_PATH.write_text("{broken")
+        with_notion(monkeypatch)
+        monkeypatch.setattr(m, "collect", fake_collect())
+        assert m.main([]) == 1
+        assert FakeClient.instances == [] and "기록 파일 오류" in caplog.text

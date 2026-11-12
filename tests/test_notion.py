@@ -625,3 +625,60 @@ class TestCrossSourceDedup:
         p = cross_plan([], rows)
         assert [r.page_id for r in p.dup_deletes] == ["it"]
         assert [r.page_id for r in p.deletes] == ["ict"]
+
+
+# ---------------------------------------------------------------- 전에 본 글 / 사용자가 지운 행
+
+class TestSeen:
+    def test_seen_url_not_recreated(self):
+        p = make_plan([notice()], [], KINDS, TODAY, ADD_MONTHS, 3, seen={notice().url})
+        assert not p.creates and p.seen_before == 1
+
+    def test_unseen_url_created(self):
+        p = make_plan([notice()], [], KINDS, TODAY, ADD_MONTHS, 3, seen={"https://ict.ulsan.ac.kr/other"})
+        assert len(p.creates) == 1
+
+    def test_seen_does_not_block_update_of_existing_row(self):
+        link = notice().url
+        rows = [row("a", "공지", "ICT융합학부", "2026-11-11", link=link)]
+        p = make_plan([notice(title="공지(수정)")], rows, KINDS, TODAY, ADD_MONTHS, 3, seen={link})
+        assert [u.changes for u in p.updates] == [{"title": ("공지", "공지(수정)")}]
+
+    def test_seen_program_not_recreated(self):
+        p = make_plan([prog()], [], KINDS, TODAY, ADD_MONTHS, 3, seen={prog().url})
+        assert not p.creates
+
+
+class TestUserDeletedDuringRun:
+    LINK = "https://ict.ulsan.ac.kr/ict/5786?no=1"
+
+    @pytest.mark.parametrize("resp", [
+        FakeResponse(404, {"code": "object_not_found", "message": "Could not find page"}),
+        FakeResponse(400, {"code": "validation_error", "message": "Can't edit block that is archived."}),
+    ])
+    def test_update_on_deleted_row_skipped(self, resp, caplog):
+        c, s, _ = client([resp])
+        rows = [row("a", "공지", "ICT융합학부", "2026-11-11", link=self.LINK)]
+        execute(c, plan_of([notice(title="공지(수정)", url=self.LINK)], rows), COLS, KINDS, 50)
+        assert "[건너뜀]" in caplog.text and "[갱신]" not in caplog.text
+
+    def test_archive_on_deleted_row_skipped_and_continues(self, caplog):
+        c, s, _ = client([FakeResponse(404, {"code": "object_not_found", "message": "x"}), FakeResponse(200)])
+        rows = [row("a", "옛1", "ICT융합학부", "2026-01-01", link="https://ict.ulsan.ac.kr/1"),
+                row("b", "옛2", "ICT융합학부", "2026-01-01", link="https://ict.ulsan.ac.kr/2")]
+        caplog.set_level("INFO")
+        execute(c, plan_of([], rows), COLS, KINDS, 50)
+        assert len(s.calls) == 2
+        assert "[건너뜀] ICT융합학부 / 옛1" in caplog.text and "[삭제] ICT융합학부 / 옛2" in caplog.text
+
+    def test_other_errors_still_raise(self):
+        c, _, _ = client([FakeResponse(400, {"code": "validation_error", "message": "bad property"})])
+        rows = [row("a", "공지", "ICT융합학부", "2026-11-11", link=self.LINK)]
+        with pytest.raises(NotionError):
+            execute(c, plan_of([notice(title="공지(수정)", url=self.LINK)], rows), COLS, KINDS, 50)
+
+    def test_error_carries_status_and_code(self):
+        c, _, _ = client([FakeResponse(404, {"code": "object_not_found", "message": "x"})])
+        with pytest.raises(NotionError) as e:
+            c._request("GET", "/x")
+        assert (e.value.status, e.value.code) == (404, "object_not_found")

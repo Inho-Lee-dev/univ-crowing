@@ -20,6 +20,7 @@ import yaml
 from .models import Item, today_kst
 from .notion import NotionClient, NotionError, TooManyDeletes, check_schema, describe, execute, make_plan, parse_row
 from .sources import PAGE_DELAY, collect, make_session
+from . import state
 
 log = logging.getLogger("collector")
 ROOT = Path(__file__).resolve().parent.parent
@@ -88,8 +89,22 @@ def main(argv: list[str] | None = None) -> int:
         log.error("NOTION_TOKEN, NOTION_DATABASE_ID가 없습니다. .env 또는 환경변수를 확인하세요.")
         return 2
 
+    try:
+        seen_map = state.load()
+    except state.StateError as e:
+        # 기록을 빈 것으로 착각하면 사용자가 지운 글이 되살아나므로 아무것도 쓰지 않고 멈춘다.
+        log.error("기록 파일 오류: %s (state/seen.json 확인 필요)", e)
+        return 1
+
     collected, failed = run_sources(sources)
     items = [it for name in collected for it in collected[name]]
+    urls = [it.url for it in items]
+    if seen_map is None:
+        # 첫 실행이거나 기록이 없어진 경우: 지금 보이는 글은 모두 '본 글'로 기록만 하고 새로 넣지 않는다.
+        log.warning("기록 파일이 없어 이번 실행은 지금 있는 글을 기록만 하고 새로 넣지 않습니다.")
+        seen = set(urls)
+    else:
+        seen = set(seen_map)
 
     rows = []
     client = None
@@ -107,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
 
     plan = make_plan(items, rows, kinds, today_kst(), int(ret["add_months"]), int(ret["months"]),
                      int(ret["program_add_months"]),
-                     [(d["keep"], d["drop"]) for d in cfg.get("cross_source_dedup") or []])
+                     [(d["keep"], d["drop"]) for d in cfg.get("cross_source_dedup") or []], seen)
 
     new = Counter(it.source for it in plan.creates)
     upd = Counter(u.item.source for u in plan.updates)
@@ -130,12 +145,14 @@ def main(argv: list[str] | None = None) -> int:
         except (NotionError, TooManyDeletes) as e:
             log.error("노션 반영 실패: %s", e)
             return 1
+        # 노션 반영이 끝난 뒤에만 기록한다. 중간에 실패하면 다음 실행이 다시 시도한다.
+        state.save(state.merge(seen_map or {}, urls, today_kst()))
 
     deleted = len(plan.deletes) if do_delete else 0
     dup_deleted = len(plan.dup_deletes) if do_delete else 0
-    log.info("%s추가 %d건 / 갱신 %d건 / 삭제 %d건 / 중복 삭제 %d건 / 이미 있음 %d건 / 기간 밖 %d건 / 중복 %d건",
+    log.info("%s추가 %d건 / 갱신 %d건 / 삭제 %d건 / 중복 삭제 %d건 / 이미 있음 %d건 / 전에 본 글 %d건 / 기간 밖 %d건 / 중복 %d건",
              "[dry-run] " if args.dry_run else "", len(plan.creates), len(plan.updates), deleted, dup_deleted,
-             plan.existing, plan.too_old, plan.duplicates)
+             plan.existing, plan.seen_before, plan.too_old, plan.duplicates)
     if failed:
         log.error("실패: %s", ", ".join(failed))
         return 1

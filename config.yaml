@@ -1,5 +1,5 @@
 notion:
-  columns: {title: 공지사항, select: 종류, date: 게시된 날짜, apply: 신청기간, run: 운영기간, link: 링크}
+  columns: {title: 공지사항, select: 주관부서, date: 게시된 날짜, apply: 신청기간, run: 운영기간, link: 링크}
 retention:
   add_months: 1            # 작성일이 최근 1개월 안인 공지만 넣음
   program_add_months: 2    # 신청 시작일이 최근 2개월 안인 U-STEP 프로그램만 넣음

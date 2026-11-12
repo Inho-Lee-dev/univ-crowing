@@ -35,6 +35,10 @@ COLUMN_TYPES = {"title": "title", "select": "select", "date": "date",
 class NotionError(RuntimeError):
     """상태 코드와 짧은 메시지만 담는다. 토큰·DB ID·응답 전체는 넣지 않는다."""
 
+    def __init__(self, msg: str, status: int | None = None, code: str = ""):
+        super().__init__(msg)
+        self.status, self.code = status, code
+
 
 class TooManyDeletes(RuntimeError):
     pass
@@ -99,12 +103,14 @@ class NotionClient:
                 self._sleep(min(max(retry_after, 0.0), 60.0))
                 continue
             if r.status_code >= 400:
+                code = ""
                 try:
                     j = r.json()
-                    msg = f"{j.get('code', '')}: {str(j.get('message', ''))[:200]}"
+                    code = str(j.get("code", ""))
+                    msg = f"{code}: {str(j.get('message', ''))[:200]}"
                 except ValueError:
                     msg = "응답 해석 불가"
-                raise NotionError(f"노션 {r.status_code} {msg}")
+                raise NotionError(f"노션 {r.status_code} {msg}", r.status_code, code)
             return r.json()
         raise NotionError("노션 429 재시도 횟수 초과")
 
@@ -231,6 +237,7 @@ class Plan:
     deletes: list[Row] = field(default_factory=list)
     dup_deletes: list[Row] = field(default_factory=list)   # 노션에 이미 있는 똑같은 행 중 지울 것
     too_old: int = 0             # 추가 기준에 걸러진 수
+    seen_before: int = 0         # 전에 본 글이라 다시 넣지 않은 수 (사용자가 지운 행 포함)
     existing: int = 0            # 이미 있어서 건너뛴 수
     duplicates: int = 0          # 같은 실행 안에서 겹친 수
 
@@ -296,7 +303,7 @@ def _notice_key(title: str, day: str | None) -> tuple[str, str | None]:
 
 def make_plan(items: list[Item], rows: list[Row], source_kinds: dict[str, str],
               today: date, add_months: int, months: int, program_add_months: int | None = None,
-              cross_dedup: list[tuple[str, str]] = ()) -> Plan:
+              cross_dedup: list[tuple[str, str]] = (), seen: set[str] | None = None) -> Plan:
     """수집한 항목과 노션 기존 행을 비교해 생성·갱신·삭제 목록을 만든다. 노션에 쓰지 않는다.
 
     add_months: 공지는 작성일이 최근 add_months개월 안일 때만 추가한다.
@@ -304,6 +311,8 @@ def make_plan(items: list[Item], rows: list[Row], source_kinds: dict[str, str],
     program_add_months: 프로그램은 신청 시작일이 최근 program_add_months개월 안일 때만 추가한다.
     cross_dedup: (남길 출처, 지울 출처) 목록. 두 출처에 공지사항·게시된 날짜가 같은 공지가 있으면
         남길 출처 것만 둔다. 지울 출처 공지는 새로 넣지 않고, 노션에 이미 있으면 보관 처리한다.
+    seen: 전에 수집한 링크 (state/seen.json). 노션에 없더라도 여기 있으면 새로 넣지 않는다.
+        사용자가 직접 지운 행이 다시 생기지 않게 하기 위해서다. None이면 이 확인을 하지 않는다.
     """
     cutoff = months_ago(today, months).isoformat()
     # 추가 기간이 보관 기간보다 길면 넣자마자 지워지므로 둘 중 늦은 날을 쓴다.
@@ -349,6 +358,9 @@ def make_plan(items: list[Item], rows: list[Row], source_kinds: dict[str, str],
                     new_apply[row.page_id] = changes["apply"][1]
             continue
 
+        if seen is not None and item.url in seen:
+            plan.seen_before += 1
+            continue
         if item.kind == "notice" and (item.source, title) in by_name:
             plan.existing += 1
             continue
@@ -411,6 +423,23 @@ def describe(plan: Plan) -> list[str]:
     return lines
 
 
+def _gone(e: NotionError) -> bool:
+    """사용자가 그사이 지운(휴지통으로 옮긴) 행이라 쓸 수 없다는 응답인지."""
+    return e.status == 404 or (e.status == 400 and "archiv" in str(e).lower()) or "trash" in str(e).lower()
+
+
+def _write_existing(fn, row: Row, label: str) -> bool:
+    """이미 있는 행에 쓴다. 그사이 사용자가 지운 행이면 오류 대신 건너뛴다."""
+    try:
+        fn()
+        return True
+    except NotionError as e:
+        if not _gone(e):
+            raise
+        log.warning("[건너뜀] %s / %s / %s: 노션에서 이미 지워진 행", row.select, row.title, label)
+        return False
+
+
 def execute(client: NotionClient, plan: Plan, columns: dict[str, str], source_kinds: dict[str, str],
             max_delete: int, do_delete: bool = True) -> None:
     """계획을 노션에 반영한다. 삭제 대상(기간 지남 + 중복)이 max_delete를 넘으면 아무것도 쓰지 않고 오류."""
@@ -426,8 +455,9 @@ def execute(client: NotionClient, plan: Plan, columns: dict[str, str], source_ki
         allowed = UPDATABLE[u.item.kind]
         if not u.row.link or not set(u.changes) <= set(allowed):
             raise RuntimeError("허용되지 않은 갱신 (버그)")
-        client.update_page(u.row.page_id, {columns[k]: _value(k, new) for k, (_, new) in u.changes.items()})
-        log.info(describe(Plan(updates=[u]))[0])
+        props = {columns[k]: _value(k, new) for k, (_, new) in u.changes.items()}
+        if _write_existing(lambda: client.update_page(u.row.page_id, props), u.row, "갱신"):
+            log.info(describe(Plan(updates=[u]))[0])
 
     if not do_delete:
         return
@@ -435,10 +465,10 @@ def execute(client: NotionClient, plan: Plan, columns: dict[str, str], source_ki
         # 계획 단계에서 걸렀지만 한 번 더 확인한다.
         if not row.link or row.select not in source_kinds:
             raise RuntimeError("삭제 기준에 맞지 않는 행 (버그)")
-        client.archive_page(row.page_id)
-        log.info("[삭제] %s / %s / %s", row.select, row.title, row.date)
+        if _write_existing(lambda: client.archive_page(row.page_id), row, "삭제"):
+            log.info("[삭제] %s / %s / %s", row.select, row.title, row.date)
     for row in plan.dup_deletes:
         if not row.link or row.select not in source_kinds:
             raise RuntimeError("중복 삭제 기준에 맞지 않는 행 (버그)")
-        client.archive_page(row.page_id)
-        log.info("[중복 삭제] %s / %s / %s", row.select, row.title, row.date)
+        if _write_existing(lambda: client.archive_page(row.page_id), row, "중복 삭제"):
+            log.info("[중복 삭제] %s / %s / %s", row.select, row.title, row.date)
