@@ -1,6 +1,6 @@
 # 모든 패키지(하위 의존성 포함)를 버전과 해시까지 고정한다 (PLAN.md 8-5).
 # 설치: pip install --require-hashes -r requirements.txt
-# 직접 쓰는 것: requests==2.34.2, beautifulsoup4==4.15.0, PyYAML==6.0.3, pytest==9.2.0 / 나머지는 그 하위 의존성.
+# 직접 쓰는 것: requests==2.34.2, beautifulsoup4==4.15.0, PyYAML==6.0.4, pytest==9.2.0 / 나머지는 그 하위 의존성.
 
 beautifulsoup4==4.15.0 \
     --hash=sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7 \
@@ -199,7 +199,7 @@ Pygments==2.21.0 \
 pytest==9.2.0 \
     --hash=sha256:07acdcf88ec174f907dc01af70bf52d49b014bbab03faeeade31c96b18c2e588 \
     --hash=sha256:97c4f3b1f3c7414aa36465e09b8220f1d03627993bd51b1282e193753c80557b
-PyYAML==6.0.3 \
+PyYAML==6.0.4 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
     --hash=sha256:0150219816b6a1fa26fb4699fb7daa9caf09eb1999f3b70fb6e786805e80375a \
     --hash=sha256:02893d100e99e03eda1c8fd5c441d8c60103fd175728e23e431db1b589cf5ab3 \
